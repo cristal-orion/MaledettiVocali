@@ -1,28 +1,52 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:maledetti_vocali/screens/history_screen.dart';
 import 'package:maledetti_vocali/services/groq_service.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ffmpeg_kit_flutter_min_gpl/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_min_gpl/return_code.dart';
+import 'package:path_provider/path_provider.dart';
+
+import 'firebase_options.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   runApp(const MyApp());
 }
 
-// MethodChannel for native communication
-const platform = MethodChannel('com.maledettivocali/converter');
-
-Future<String?> convertFileNatively(String path) async {
+Future<String?> convertFileWithFFmpeg(String path) async {
   try {
-    final String? resultPath = await platform.invokeMethod('convertOpusToWav', {'path': path});
-    return resultPath;
-  } on PlatformException catch (e) {
-    print("Failed to convert file: '${e.message}'.");
+    final tempDir = await getTemporaryDirectory();
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final outputPath = '${tempDir.path}/converted_$timestamp.wav';
+
+    // -y to overwrite output files
+    // -vn to disable video recording
+    // -acodec pcm_s16le for standard WAV encoding
+    // -ar 16000 sets sample rate to 16kHz (good for speech recognition)
+    // -ac 1 sets to mono channel
+    final session = await FFmpegKit.execute(
+      '-y -i "$path" -vn -acodec pcm_s16le -ar 16000 -ac 1 "$outputPath"'
+    );
+
+    final returnCode = await session.getReturnCode();
+
+    if (ReturnCode.isSuccess(returnCode)) {
+      return outputPath;
+    } else {
+      print("FFmpeg conversion failed with state ${await session.getState()} and rc $returnCode");
+      print("FFmpeg output: ${await session.getOutput()}");
+      return null;
+    }
+  } catch (e) {
+    print("Exception during conversion: $e");
     return null;
   }
 }
@@ -90,7 +114,12 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
       _transcription = "Conversione in corso...";
     });
 
-    final convertedFilePath = await convertFileNatively(filePath);
+    // Check if file exists
+    if (!File(filePath).existsSync()) {
+        print("File does not exist at path: $filePath");
+    }
+
+    final convertedFilePath = await convertFileWithFFmpeg(filePath);
 
     if (convertedFilePath != null) {
       setState(() {

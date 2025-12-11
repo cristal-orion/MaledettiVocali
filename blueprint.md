@@ -1,22 +1,26 @@
 # Maledetti Vocali - Blueprint
 
 ## Overview
+"Maledetti Vocali" is a Flutter application designed to transcribe voice messages received via WhatsApp and Telegram. It allows users to share audio files from these apps directly to "Maledetti Vocali", which then converts the audio to a compatible format and uses the Groq API (Whisper model) for speech-to-text transcription.
 
-Maledetti Vocali is a Flutter application designed to transcribe voice messages shared from other apps like WhatsApp or Telegram. It leverages the Groq API for fast speech-to-text conversion and provides a simple interface for users to read, copy, and share the transcriptions.
+## Project Structure
+- `lib/main.dart`: Main entry point, handles file sharing intents, audio conversion, and displays transcription.
+- `lib/services/groq_service.dart`: Handles communication with the Groq API.
+- `lib/screens/history_screen.dart`: Displays conversion history.
+- `android/`: Android native configuration (Kotlin/Gradle).
 
-## Features
+## Current Status
+- **Audio Conversion**: Migrated from a broken native implementation to `ffmpeg_kit_flutter_audio` for robust handling of various audio formats (Opus, OGG, etc.).
+- **Transcription**: Uses Groq API (`whisper-large-v3` model).
+- **Sharing**: Uses `receive_sharing_intent` to accept audio files from other apps.
+- **State**: The app is currently being updated to ensure the conversion pipeline works correctly.
 
-- **Android Share Integration**: The app will appear in the Android share menu for audio files.
-- **Audio Conversion**: It will convert `.opus` files to `.mp3` locally.
-- **Transcription**: It will use the Groq API for speech-to-text.
-- **Transcription Display**: It will show the transcription in a clean and readable format.
-- **History**: It will save transcriptions for later viewing.
-- **Firebase Integration**: It will use Firebase for analytics and crashlytics.
+## Recent Changes
+- Replaced custom native Android audio conversion code with `ffmpeg_kit_flutter_audio` package.
+- Updated `minSdk` to 24 in `android/app/build.gradle.kts` to support `ffmpeg_kit`.
+- Cleaned up `MainActivity.kt`.
 
-## Current Plan
-
-1.  **Project Setup**: Configure `pubspec.yaml` with all necessary dependencies.
-2.  **Android Configuration**: Set up `AndroidManifest.xml` to receive share intents.
-3.  **UI/UX**: Create the main screen, transcription display, and history screen.
-4.  **Services**: Implement services for file handling, API calls, and history management.
-5.  **Firebase**: Integrate Firebase for analytics and crash reporting.
+## Plan
+1.  **Test Conversion**: Verify that `ffmpeg_kit` correctly converts WhatsApp voice notes (typically Opus/OGG) to WAV.
+2.  **Test API**: Ensure Groq API receives the WAV file and returns the transcription.
+3.  **Refinement**: Improve error handling and UI feedback.

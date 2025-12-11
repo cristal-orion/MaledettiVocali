@@ -20,8 +20,7 @@ dependencies:
   share_plus: ^7.0.0
   flutter_launcher_icons: ^0.13.1
   permission_handler: ^11.0.1
-  # ffmpeg is now completely removed
-
+  ffmpeg_kit_flutter_min_gpl: ^6.0.3
 
 dev_dependencies:
   flutter_test:

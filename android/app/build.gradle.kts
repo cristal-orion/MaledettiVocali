@@ -4,6 +4,7 @@ plugins {
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
     id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
 }
 
 android {
@@ -22,7 +23,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.maledetti_vocali"
-        minSdk = flutter.minSdkVersion
+        minSdk = 24
         targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -44,6 +45,5 @@ dependencies {
     implementation("com.google.firebase:firebase-analytics-ktx")
     implementation("com.google.firebase:firebase-crashlytics-ktx")
 
-    // Using the CORRECT coordinates for Concentus from JitPack
-    implementation("com.github.axet:android-library:concentus-1.1.10")
+    // We will add the local JAR dependency here
 }

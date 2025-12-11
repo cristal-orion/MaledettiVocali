@@ -34,5 +34,6 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://packages.arthenica.com/repository/maven-public/") }
     }
 }

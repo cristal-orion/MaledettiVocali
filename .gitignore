@@ -27,6 +27,7 @@ migrate_working_dir/
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
+.flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
@@ -43,3 +44,16 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Sensitive files - DO NOT COMMIT
+*.env
+.env.*
+**/google-services.json
+**/GoogleService-Info.plist
+**/firebase_options.dart
+android/local.properties
+
+# API Keys and secrets
+**/secrets/
+*.key
+*.pem

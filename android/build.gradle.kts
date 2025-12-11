@@ -14,6 +14,8 @@ allprojects {
         mavenCentral()
         maven { url = uri("https://jitpack.io") }
         maven { url = uri("https://repo.maven.apache.org/maven2") }
+        // FFmpegKit repository
+        maven { url = uri("https://packages.arthenica.com/repository/maven-public/") }
     }
 }
 

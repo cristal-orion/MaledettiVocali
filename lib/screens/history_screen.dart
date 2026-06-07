@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:maledetti_vocali/theme/app_theme.dart';
 import 'dart:convert';
 
 class TranscriptionEntry {
@@ -112,27 +113,24 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF1A1A2E),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF16213E),
-        elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Color(0xFF00D9FF)),
+          icon: const Icon(Icons.arrow_back, color: AppColors.accent),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text(
-          'Cronologia',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
+        title: const Text('Cronologia', style: AppText.title),
         actions: [
           if (_history.isNotEmpty)
             IconButton(
-              icon: const Icon(Icons.delete_sweep, color: Colors.white54),
+              icon: const Icon(Icons.delete_sweep, color: AppColors.textLo),
+              tooltip: 'Cancella tutto',
               onPressed: _clearAll,
             ),
         ],
       ),
-      body: _history.isEmpty
+      body: Container(
+        decoration: const BoxDecoration(gradient: AppColors.bgGradient),
+        child: _history.isEmpty
           ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -271,6 +269,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 );
               },
             ),
+      ),
     );
   }
 }

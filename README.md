@@ -26,6 +26,8 @@ Tired of listening to long voice messages? Just share them with Maledetti Vocali
 ## ✨ Features
 
 - 🎯 **Easy Sharing** - Share audio directly from WhatsApp, Telegram, or any app
+- 📚 **Batch Mode** - Queue several voice notes (shared one by one) and transcribe them all at once
+- 🧠 **AI Summary** - One tap to summarize long or multiple voice messages
 - 🔊 **Multiple Format Support** - Works with OGG, OPUS, MP3, M4A, WAV, and more
 - 🤖 **AI-Powered** - Uses Whisper models for accurate transcriptions
 - 🌐 **Multi-Provider** - Choose between Groq (free) or OpenAI
@@ -99,6 +101,21 @@ Download the latest APK from the [Releases](https://github.com/cristal-orion/Mal
 3. Click "Create API Key"
 4. Copy the key and paste it in the app
 
+## 📚 Batch Mode
+
+WhatsApp does not let you share multiple voice messages externally at once. Batch mode works around this:
+
+1. Open the app and tap **"Attiva modalità batch"** (Enable batch mode)
+2. Go back to WhatsApp and share the **first** voice note to Maledetti Vocali — it gets queued
+3. Share the next ones one by one — each is added to the queue
+4. When you're done, tap **"Trascrivi (N)"** and all of them are transcribed in one go
+
+The queue is copied to the app's storage and saved, so it survives even if Android closes the app in the background while you switch apps.
+
+## 🧠 Summary
+
+After a transcription, tap **"Riassumi"** to get a concise AI summary of the voice message(s). The summary uses the same provider and API key configured for transcription (Groq chat or OpenAI), so no extra setup is needed.
+
 ## 🛠️ Tech Stack
 
 - **Framework**: Flutter 3.38 / Dart 3.10
@@ -111,13 +128,15 @@ Download the latest APK from the [Releases](https://github.com/cristal-orion/Mal
 
 ```
 lib/
-├── main.dart                 # App entry point & main screen
+├── main.dart                 # App entry point, main screen & batch mode
 ├── firebase_options.dart     # Firebase configuration
+├── theme/
+│   └── app_theme.dart        # Design tokens (colors, spacing, type) & global theme
 ├── screens/
 │   ├── history_screen.dart   # Transcription history
 │   └── settings_screen.dart  # Provider & API key settings
 └── services/
-    └── groq_service.dart     # Transcription service
+    └── groq_service.dart     # Transcription & summary service
 ```
 
 ## 🤝 Contributing

@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
+import 'package:dio/dio.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:maledetti_vocali/screens/history_screen.dart';
 import 'package:maledetti_vocali/screens/settings_screen.dart';
 import 'package:maledetti_vocali/services/groq_service.dart';
@@ -52,10 +54,19 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
   String _summary = '';
   bool _isSummarizing = false;
 
+  // Ultimo errore da mostrare a schermo (prima finiva solo in _statusText,
+  // che e' visibile unicamente durante il caricamento).
+  String _errorMessage = '';
+  AiErrorKind? _errorKind;
+
+  // Permette di annullare una trascrizione in corso.
+  CancelToken? _cancelToken;
+
   // Modalita' batch: accumula i vocali condivisi uno alla volta e li
   // trascrive tutti insieme al comando dell'utente.
   bool _batchMode = false;
   final List<String> _queuedFiles = [];
+  String _batchNotice = '';
 
   static const String _kBatchMode = 'batch_mode';
   static const String _kBatchQueue = 'batch_queue';
@@ -84,7 +95,7 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
         _handleSharedFiles(value);
       }
     }, onError: (err) {
-      print("getMediaStream error: $err");
+      debugPrint("getMediaStream error: $err");
     });
 
     // Carica lo stato batch PRIMA di processare la condivisione iniziale,
@@ -103,6 +114,8 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
   @override
   void dispose() {
     _intentDataStreamSubscription.cancel();
+    // Non lasciare in volo una richiesta di cui nessuno leggera' il risultato.
+    _cancelToken?.cancel('schermata chiusa');
     super.dispose();
   }
 
@@ -136,17 +149,22 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
     if (mounted) setState(() => _batchMode = value);
   }
 
-  void _toggleBatchMode() {
+  Future<void> _toggleBatchMode() async {
+    setState(() {
+      _batchNotice = '';
+      _errorMessage = '';
+      _errorKind = null;
+    });
     if (_batchMode) {
-      _clearQueue();
-      _setBatchMode(false);
+      await _clearQueue();
+      await _setBatchMode(false);
     } else {
       // Entrando in batch nascondo un eventuale risultato precedente.
       setState(() {
         _transcriptions.clear();
         _summary = '';
       });
-      _setBatchMode(true);
+      await _setBatchMode(true);
     }
   }
 
@@ -173,33 +191,36 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
         final saved = await _persistFile(f.path);
         _queuedFiles.add(saved);
       } catch (e) {
-        print('Errore copia in coda: $e');
+        debugPrint('Errore copia in coda: $e');
       }
     }
     await _saveQueue();
     if (mounted) setState(() {});
   }
 
-  Future<void> _removeFromQueue(int index) async {
-    try {
-      final f = File(_queuedFiles[index]);
-      if (f.existsSync()) f.deleteSync();
-    } catch (_) {}
-    _queuedFiles.removeAt(index);
-    await _saveQueue();
-    if (mounted) setState(() {});
-  }
+  Future<void> _removeFromQueue(int index) =>
+      _removeQueued([_queuedFiles[index]]);
 
-  Future<void> _clearQueue() async {
-    for (final p in _queuedFiles) {
+  Future<void> _clearQueue() => _removeQueued(List<String>.from(_queuedFiles));
+
+  /// Toglie dalla coda i percorsi indicati e cancella le copie su disco.
+  Future<void> _removeQueued(List<String> paths) async {
+    if (paths.isEmpty) return;
+    for (final p in paths) {
       try {
         final f = File(p);
         if (f.existsSync()) f.deleteSync();
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('Errore rimozione dalla coda: $e');
+      }
     }
-    _queuedFiles.clear();
+    _queuedFiles.removeWhere(paths.contains);
     await _saveQueue();
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {
+        if (_queuedFiles.isEmpty) _batchNotice = '';
+      });
+    }
   }
 
   Future<void> _transcribeBatch() async {
@@ -210,13 +231,35 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
       _showApiKeyMissingDialog();
       return;
     }
+
+    setState(() => _batchNotice = '');
+
     final paths = List<String>.from(_queuedFiles);
-    await _runTranscription(paths);
-    // Pulisci ed esci dal batch solo se la trascrizione e' andata a buon fine.
-    if (_hasResult) {
-      await _clearQueue();
+    final outcomes = await _runTranscription(paths);
+
+    // Togli dalla coda SOLO i vocali trascritti davvero: quelli falliti (o non
+    // ancora processati, se l'utente ha annullato) restano disponibili per un
+    // altro tentativo invece di essere cancellati.
+    await _removeQueued(
+      outcomes.where((o) => o.ok).map((o) => o.path).toList(),
+    );
+
+    if (!mounted) return;
+
+    if (_queuedFiles.isEmpty) {
       await _setBatchMode(false);
+      return;
     }
+
+    final failed = outcomes.where((o) => !o.ok).toList();
+    final rimasti = _queuedFiles.length;
+    setState(() {
+      _batchNotice = failed.isEmpty
+          ? '$rimasti ${rimasti == 1 ? 'vocale' : 'vocali'} non ancora trascritti: '
+              'premi Trascrivi per riprendere.'
+          : '$rimasti ${rimasti == 1 ? 'vocale' : 'vocali'} ancora in coda. '
+              '${failed.first.error ?? ''}';
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -244,57 +287,100 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
   }
 
   /// Trascrive in sequenza una lista di percorsi e popola il risultato.
-  Future<void> _runTranscription(List<String> paths) async {
+  /// Ritorna l'esito di ogni singolo file, cosi' chi chiama sa esattamente
+  /// cosa e' andato a buon fine e cosa no.
+  Future<List<_FileOutcome>> _runTranscription(List<String> paths) async {
+    final cancelToken = CancelToken();
     setState(() {
       _isLoading = true;
       _summary = '';
+      _errorMessage = '';
+      _errorKind = null;
       _transcriptions.clear();
+      _cancelToken = cancelToken;
       _statusText = "Trascrizione in corso...";
     });
 
-    final List<String> results = [];
+    final outcomes = <_FileOutcome>[];
 
     for (int i = 0; i < paths.length; i++) {
+      if (cancelToken.isCancelled) break;
       final filePath = paths[i];
 
-      if (paths.length > 1) {
+      if (paths.length > 1 && mounted) {
         setState(() {
           _statusText = "Trascrizione ${i + 1}/${paths.length}...";
         });
       }
 
       if (!File(filePath).existsSync()) {
-        print("File does not exist at path: $filePath");
+        debugPrint("File does not exist at path: $filePath");
+        outcomes.add(_FileOutcome(
+          filePath,
+          error: 'File non piu\' disponibile sul dispositivo.',
+          kind: AiErrorKind.unknown,
+        ));
         continue;
       }
 
       // Send the file directly to the API without conversion
       // Whisper model supports many formats including opus/ogg
-      final transcription = await _groqService.transcribe(filePath);
+      final result = await _groqService.transcribe(
+        filePath,
+        cancelToken: cancelToken,
+      );
 
-      if (transcription != null && transcription.trim().isNotEmpty) {
-        final text = transcription.trim();
-        results.add(text);
+      if (result.isCancelled) break;
+
+      if (result.isSuccess) {
+        final text = result.text!.trim();
+        outcomes.add(_FileOutcome(filePath, text: text));
         // Save immediately without popup
-        _saveTranscription(text, 'Sconosciuto');
+        await _saveTranscription(text, 'Sconosciuto');
+      } else {
+        outcomes.add(_FileOutcome(
+          filePath,
+          error: result.error,
+          kind: result.kind,
+        ));
       }
     }
 
-    if (results.isEmpty) {
-      setState(() {
-        _statusText = "Errore durante la trascrizione.";
-        _isLoading = false;
-      });
-      return;
-    }
+    if (!mounted) return outcomes;
+
+    final done = outcomes.where((o) => o.ok).toList();
+    final failed = outcomes.where((o) => !o.ok).toList();
 
     setState(() {
+      _isLoading = false;
+      _cancelToken = null;
       _transcriptions
         ..clear()
-        ..addAll(results);
-      _currentSender = 'Sconosciuto';
-      _isLoading = false;
+        ..addAll(done.map((o) => o.text!));
+      if (done.isNotEmpty) _currentSender = 'Sconosciuto';
+      // Nessun risultato: l'errore va mostrato a schermo, non solo loggato.
+      if (done.isEmpty && failed.isNotEmpty) {
+        _errorMessage = failed.first.error!;
+        _errorKind = failed.first.kind;
+      }
     });
+
+    // Successo parziale: i risultati sono a schermo, ma l'errore va detto.
+    if (done.isNotEmpty && failed.isNotEmpty) {
+      final n = failed.length;
+      _showSnack(
+        '$n ${n == 1 ? 'vocale non trascritto' : 'vocali non trascritti'}: '
+        '${failed.first.error}',
+        isError: true,
+      );
+    }
+
+    return outcomes;
+  }
+
+  void _cancelTranscription() {
+    _cancelToken?.cancel('annullato dall\'utente');
+    if (mounted) setState(() => _statusText = 'Annullamento...');
   }
 
   Future<void> _summarize() async {
@@ -302,22 +388,40 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
 
     setState(() => _isSummarizing = true);
 
-    final summary = await _groqService.summarize(_combinedText);
+    final result = await _groqService.summarize(_combinedText);
+
+    if (!mounted) return;
 
     setState(() {
       _isSummarizing = false;
-      if (summary != null && summary.trim().isNotEmpty) {
-        _summary = summary.trim();
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Errore durante il riassunto. Riprova.'),
-            backgroundColor: Color(0xFFFF6B6B),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
+      if (result.isSuccess) _summary = result.text!.trim();
     });
+
+    if (!result.isSuccess && !result.isCancelled) {
+      _showSnack(
+        result.error ?? 'Errore durante il riassunto. Riprova.',
+        isError: true,
+      );
+    }
+  }
+
+  void _showSnack(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? AppColors.danger : AppColors.surfaceHi,
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: isError ? 6 : 2),
+      ),
+    );
+  }
+
+  /// [conferma] e' il messaggio mostrato dopo la copia
+  /// (es. 'Trascrizione copiata negli appunti').
+  Future<void> _copyToClipboard(String text, String conferma) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    _showSnack(conferma);
   }
 
   Future<void> _saveTranscription(String transcription, String senderName) async {
@@ -349,7 +453,7 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
           _currentSender = senderName.isEmpty ? 'Sconosciuto' : senderName;
         });
       } catch (e) {
-        print('Error updating sender: $e');
+        debugPrint('Error updating sender: $e');
       }
     }
   }
@@ -524,13 +628,20 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
               const SizedBox(width: AppSpacing.sm),
               Text('RIASSUNTO', style: AppText.label.copyWith(color: _violetText)),
               const Spacer(),
-              InkWell(
-                onTap: () => Share.share(_summary),
-                borderRadius: BorderRadius.circular(AppRadii.sm),
-                child: const Padding(
-                  padding: EdgeInsets.all(AppSpacing.xs),
-                  child: Icon(Icons.ios_share, color: _violetText, size: 18),
+              _iconAction(
+                icon: Icons.content_copy,
+                tooltip: 'Copia il riassunto',
+                color: _violetText,
+                onTap: () => _copyToClipboard(
+                  _summary,
+                  'Riassunto copiato negli appunti',
                 ),
+              ),
+              _iconAction(
+                icon: Icons.ios_share,
+                tooltip: 'Condividi il riassunto',
+                color: _violetText,
+                onTap: () => Share.share(_summary),
               ),
             ],
           ),
@@ -575,7 +686,39 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
               ),
             ),
           ),
+        const SizedBox(width: AppSpacing.sm),
+        _iconAction(
+          icon: Icons.content_copy,
+          tooltip: 'Copia il testo',
+          color: AppColors.accent,
+          onTap: () => _copyToClipboard(
+            _combinedText,
+            count > 1
+                ? 'Trascrizioni copiate negli appunti'
+                : 'Trascrizione copiata negli appunti',
+          ),
+        ),
       ],
+    );
+  }
+
+  /// Piccolo pulsante-icona con area di tocco decente.
+  Widget _iconAction({
+    required IconData icon,
+    required String tooltip,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadii.sm),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          child: Icon(icon, color: color, size: 18),
+        ),
+      ),
     );
   }
 
@@ -783,6 +926,27 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
             ],
           ),
         ),
+        // Spiega perche' dei vocali sono ancora qui dopo un tentativo.
+        if (_batchNotice.isNotEmpty) ...[
+          const SizedBox(height: AppSpacing.md),
+          Container(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            decoration: BoxDecoration(
+              color: AppColors.danger.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(AppRadii.sm),
+              border: Border.all(color: AppColors.danger.withOpacity(0.35)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.replay, color: AppColors.danger, size: 18),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(child: Text(_batchNotice, style: AppText.caption)),
+              ],
+            ),
+          ),
+        ],
+
         const SizedBox(height: AppSpacing.xl),
 
         if (count == 0)
@@ -965,6 +1129,78 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
           ),
           const SizedBox(height: AppSpacing.xxl),
           Text(_statusText, style: AppText.bodyMuted, textAlign: TextAlign.center),
+          const SizedBox(height: AppSpacing.lg),
+          // Una richiesta lenta non deve piu' bloccare l'utente a tempo
+          // indeterminato: i vocali non ancora trascritti restano in coda.
+          TextButton(
+            onPressed: (_cancelToken?.isCancelled ?? true) ? null : _cancelTranscription,
+            child: Text(
+              'Annulla',
+              style: AppText.caption.copyWith(
+                color: AppColors.textLo,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Banda d'errore: prima il messaggio finiva in _statusText, che pero' e'
+  /// visibile solo durante il caricamento — quindi l'utente non vedeva nulla.
+  Widget _buildErrorCard() {
+    final isKeyProblem =
+        _errorKind == AiErrorKind.auth || _errorKind == AiErrorKind.missingKey;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      decoration: BoxDecoration(
+        color: AppColors.danger.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(AppRadii.md),
+        border: Border.all(color: AppColors.danger.withOpacity(0.40)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.error_outline, color: AppColors.danger, size: 18),
+              const SizedBox(width: AppSpacing.sm),
+              Text(
+                'NON RIUSCITO',
+                style: AppText.label.copyWith(color: AppColors.danger),
+              ),
+              const Spacer(),
+              InkWell(
+                onTap: () => setState(() {
+                  _errorMessage = '';
+                  _errorKind = null;
+                }),
+                borderRadius: BorderRadius.circular(AppRadii.sm),
+                child: const Padding(
+                  padding: EdgeInsets.all(AppSpacing.xs),
+                  child: Icon(Icons.close, color: AppColors.textFaint, size: 18),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text(_errorMessage, style: AppText.bodyMuted),
+          if (isKeyProblem) ...[
+            const SizedBox(height: AppSpacing.md),
+            TextButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                );
+              },
+              icon: const Icon(Icons.settings_outlined, size: 18),
+              label: const Text('Vai alle impostazioni'),
+              style: TextButton.styleFrom(foregroundColor: AppColors.accent),
+            ),
+          ],
         ],
       ),
     );
@@ -1018,9 +1254,28 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
             ? _buildLoading()
             : SingleChildScrollView(
                 padding: const EdgeInsets.all(AppSpacing.xl),
-                child: _batchMode
-                    ? _buildBatchView()
-                    : (_hasResult ? _buildResultCard() : _buildEmptyState()),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_errorMessage.isNotEmpty) ...[
+                      _buildErrorCard(),
+                      const SizedBox(height: AppSpacing.xl),
+                    ],
+                    // In batch restiamo nella vista coda anche dopo un
+                    // successo parziale: i vocali trascritti si vedono sopra,
+                    // quelli falliti restano in coda sotto, pronti a riprovare.
+                    if (_batchMode) ...[
+                      if (_hasResult) ...[
+                        _buildResultCard(),
+                        const SizedBox(height: AppSpacing.xl),
+                      ],
+                      _buildBatchView(),
+                    ] else if (_hasResult)
+                      _buildResultCard()
+                    else
+                      _buildEmptyState(),
+                  ],
+                ),
               ),
       ),
       floatingActionButton: _hasResult
@@ -1034,4 +1289,17 @@ class _TranscriptionScreenState extends State<TranscriptionScreen> {
           : null,
     );
   }
+}
+
+/// Esito della trascrizione di un singolo file. Serve per sapere quali vocali
+/// togliere dalla coda batch e quali lasciare per un nuovo tentativo.
+class _FileOutcome {
+  final String path;
+  final String? text;
+  final String? error;
+  final AiErrorKind? kind;
+
+  const _FileOutcome(this.path, {this.text, this.error, this.kind});
+
+  bool get ok => text != null;
 }

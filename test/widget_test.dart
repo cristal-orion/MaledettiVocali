@@ -2,11 +2,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:maledetti_vocali/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
+  testWidgets('la schermata iniziale invita a condividere un vocale',
+      (WidgetTester tester) async {
     await tester.pumpWidget(const MyApp());
 
-    // Verify that our counter starts at 0.
-    expect(find.text('Condividi un file audio per iniziare...'), findsOneWidget);
+    expect(find.text('Condividi un vocale'), findsOneWidget);
+    expect(find.text('Attiva modalità batch'), findsOneWidget);
   });
 }

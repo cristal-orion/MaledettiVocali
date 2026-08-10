@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:maledetti_vocali/theme/app_theme.dart';
@@ -69,6 +70,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
     setState(() {
       _history = rawHistory.map((e) => TranscriptionEntry.fromJson(e)).toList();
     });
+  }
+
+  Future<void> _copyEntry(TranscriptionEntry entry) async {
+    await Clipboard.setData(ClipboardData(text: entry.text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Trascrizione copiata negli appunti'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> _deleteEntry(int index) async {
@@ -218,13 +230,25 @@ class _HistoryScreenState extends State<HistoryScreen> {
                               icon: const Icon(Icons.more_vert, color: Colors.white38),
                               color: const Color(0xFF1A1A2E),
                               onSelected: (value) {
-                                if (value == 'share') {
+                                if (value == 'copy') {
+                                  _copyEntry(entry);
+                                } else if (value == 'share') {
                                   Share.share('${entry.sender}:\n${entry.text}');
                                 } else if (value == 'delete') {
                                   _deleteEntry(index);
                                 }
                               },
                               itemBuilder: (context) => [
+                                const PopupMenuItem(
+                                  value: 'copy',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.content_copy, color: Color(0xFF00D9FF), size: 20),
+                                      SizedBox(width: 12),
+                                      Text('Copia', style: TextStyle(color: Colors.white)),
+                                    ],
+                                  ),
+                                ),
                                 const PopupMenuItem(
                                   value: 'share',
                                   child: Row(

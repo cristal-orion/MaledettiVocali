@@ -5,7 +5,7 @@
     <!-- For Android 13+ (API 33+) -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
     <application
-        android:label="maledetti_vocali"
+        android:label="Maledetti Vocali"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

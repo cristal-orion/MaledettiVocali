@@ -31,6 +31,7 @@ Tired of listening to long voice messages? Just share them with Maledetti Vocali
 - 🔊 **Multiple Format Support** - Works with OGG, OPUS, MP3, M4A, WAV, and more
 - 🤖 **AI-Powered** - Uses Whisper models for accurate transcriptions
 - 🌐 **Multi-Provider** - Choose between Groq (free) or OpenAI
+- 📋 **Copy to Clipboard** - One tap to copy a transcription or summary
 - 📝 **History** - Keep track of all your transcriptions with sender names
 - 🌙 **Dark Theme** - Beautiful modern dark UI
 - 📤 **Share Results** - Easily share transcriptions with others
@@ -69,6 +70,10 @@ Tired of listening to long voice messages? Just share them with Maledetti Vocali
    ```
 
 ### Build APK
+
+> ⚠️ Prima di distribuire una nuova APK leggi [RELEASE.md](RELEASE.md): va incrementato
+> il `versionCode` in `pubspec.yaml` e usata sempre la stessa keystore, altrimenti
+> l'aggiornamento sopra una versione installata fallisce.
 
 ```bash
 # Debug build
@@ -111,6 +116,8 @@ WhatsApp does not let you share multiple voice messages externally at once. Batc
 4. When you're done, tap **"Trascrivi (N)"** and all of them are transcribed in one go
 
 The queue is copied to the app's storage and saved, so it survives even if Android closes the app in the background while you switch apps.
+
+If a voice note fails (rate limit, no connection, file too large), **it stays in the queue** with the reason shown: press "Trascrivi" again to retry only what's missing. You can also cancel a transcription in progress — whatever hasn't been processed yet remains queued.
 
 ## 🧠 Summary
 

@@ -57,3 +57,8 @@ android/local.properties
 **/secrets/
 *.key
 *.pem
+
+# Firma di release - NON committare mai keystore e password
+android/key.properties
+*.jks
+*.keystore
